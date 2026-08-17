@@ -626,27 +626,55 @@
   });
   window.addEventListener('mouseup', () => { dragging = false; });
 
-  document.getElementById('dlBtn').addEventListener('click', () => {
-    draw();
-    const fmt = FORMATS[currentFormat];
-    const tmp = document.createElement('canvas');
-    tmp.width = fmt.cw; tmp.height = fmt.ch;
-    const tc = tmp.getContext('2d');
+ function supportsFileShare() {
+  if (!navigator.canShare) return false;
+  try {
+    const testFile = new File([new Blob(['x'])], 'test.png', { type: 'image/png' });
+    return navigator.canShare({ files: [testFile] });
+  } catch (e) {
+    return false;
+  }
+}
 
-    if (fmt.circular) {
-      const S = fmt.cw;
-      tc.beginPath();
-      tc.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2);
-      tc.closePath();
-      tc.clip();
+document.getElementById('dlBtn').addEventListener('click', async () => {
+  draw();
+  const fmt = FORMATS[currentFormat];
+  const tmp = document.createElement('canvas');
+  tmp.width = fmt.cw; tmp.height = fmt.ch;
+  const tc = tmp.getContext('2d');
+
+  if (fmt.circular) {
+    const S = fmt.cw;
+    tc.beginPath();
+    tc.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2);
+    tc.closePath();
+    tc.clip();
+  }
+  tc.drawImage(cv, 0, 0);
+
+  const fileName = fmt.label + '.png';
+
+  tmp.toBlob(async (blob) => {
+    if (!blob) return;
+    const file = new File([blob], fileName, { type: 'image/png' });
+    const canShareFiles = supportsFileShare() && navigator.canShare({ files: [file] });
+
+    if (canShareFiles) {
+      try {
+        await navigator.share({ files: [file], title: 'Coronel Michello 20122' });
+        return;
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+      }
     }
-    tc.drawImage(cv, 0, 0);
 
     const a = document.createElement('a');
-    a.download = fmt.label + '.png';
-    a.href = tmp.toDataURL('image/png');
+    a.download = fileName;
+    a.href = URL.createObjectURL(blob);
     a.click();
-  });
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }, 'image/png');
+});
 
   buildPreview();
 </script>
