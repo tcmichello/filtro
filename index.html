@@ -313,15 +313,28 @@ const ARQUIVOS = {
    curva      curvatura da borda de cima: 0 = reta,
               0.06 = leve, 0.14 = cúpula                (fração da altura)
    blocoH     tamanho do bloco de texto dentro da faixa (fração da faixa)
+   blocoW     largura máxima do bloco                   (fração da largura)
    blocoY     centro vertical do bloco dentro da faixa  (fração da faixa)
+              aumente para DESCER o bloco inteiro
    corH       altura do recorte do Coronel              (fração da altura)
    corCX      centro horizontal do Coronel              (fração da largura)
    corBase    onde a base dele encosta                  (fração da altura)
+
+   >>> Para deixar o nome/número MAIOR ou MENOR mexa em blocoH e blocoW.
+       Quem manda é o menor dos dois: se aumentar blocoH e nada mudar,
+       aumente também blocoW (o teto é 1 = largura inteira da arte).
    =================================================================== */
+
+/* CORTE DO PNG michello-bloco.png — frações da altura do arquivo que
+   são descartadas antes de desenhar. base: 0.22 recorta o "podemos"
+   do rodapé. Se ainda aparecer um pedaço dele, suba para 0.24 / 0.26;
+   se cortar o número 20122, baixe para 0.20 / 0.18. */
+const BLOCO_CORTE = { topo: 0.00, base: 0.22 };
+
 const LAYOUT = {
-  perfil:  { bandTop: 0.640, curva: 0, blocoH: 0.84, blocoY: 0.50, corH: 0.62, corCX: 0.750, corBase: 0.700 },
-  post:    { bandTop: 0.645, curva: 0, blocoH: 0.84, blocoY: 0.50, corH: 0.63, corCX: 0.755, corBase: 0.705 },
-  stories: { bandTop: 0.760, curva: 0, blocoH: 0.78, blocoY: 0.48, corH: 0.45, corCX: 0.755, corBase: 0.800 },
+  perfil:  { bandTop: 0.640, curva: 0, blocoH: 0.99, blocoW: 0.95, blocoY: 0.54, corH: 0.62, corCX: 0.750, corBase: 0.700 },
+  post:    { bandTop: 0.645, curva: 0, blocoH: 0.99, blocoW: 0.95, blocoY: 0.54, corH: 0.63, corCX: 0.755, corBase: 0.705 },
+  stories: { bandTop: 0.760, curva: 0, blocoH: 0.92, blocoW: 0.93, blocoY: 0.52, corH: 0.45, corCX: 0.755, corBase: 0.800 },
 };
 
 const FORMATS = {
@@ -330,9 +343,17 @@ const FORMATS = {
   stories: { cw: 1080, ch: 1920, label: 'filtro-stories-coronel-michello', circular: false },
 };
 
-const AZUL   = '#1b3a68';   // azul da cúpula
+const AZUL   = '#1b3a68';   // azul da faixa
 const CNPJ   = 'CNPJ: 68.462.311/0001-06';
 const DOURADO = '#e0b93f';
+
+/* Sombreamento azul transparente — SÓ na parte de baixo da foto,
+   subindo da faixa para cima. O resto da foto fica intocado.
+   TINT_PE   força do azul colado na faixa   (0 = nada, 0.60 = forte)
+   TINT_ALT  até onde ele sobe               (fração da altura da arte) */
+const TINT_PE  = 0.45;
+const TINT_ALT = 0.22;
+const AZUL_RGB = '27, 58, 104';   // #1b3a68 em rgb, para usar com alfa
 
 /* ---- Estado ------------------------------------------------------- */
 let currentFormat = 'perfil';
@@ -340,7 +361,9 @@ let userImg = null, comCoronel = true, adjust = false;
 let zoom = 1, rot = 0, ox = 0, oy = 0;
 
 const cv = document.getElementById('cv');
-const ctx = cv.getContext('2d');
+let ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = true;
+ctx.imageSmoothingQuality = 'high';
 const frame = document.getElementById('frame');
 const inner = document.getElementById('inner');
 const zoomR = document.getElementById('zoomR');
@@ -411,6 +434,8 @@ function setFormat(f) {
   currentFormat = f;
   const fmt = FORMATS[f];
   cv.width = fmt.cw; cv.height = fmt.ch;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   zoom = 1; rot = 0; ox = 0; oy = 0; zoomR.value = 1;
   layoutPreview(); draw();
 }
@@ -455,17 +480,25 @@ function drawCoronel() {
   ctx.restore();
 }
 
+/* Degradê azul que funde a foto com a faixa. */
 function drawScrim() {
   const fmt = FORMATS[currentFormat], cfg = LAYOUT[currentFormat];
   const CW = fmt.cw, CH = fmt.ch;
   const fim = CH * cfg.bandTop;
-  const ini = fim - CH * 0.16;
+  const ini = fim - CH * TINT_ALT;
   const g = ctx.createLinearGradient(0, ini, 0, fim);
-  g.addColorStop(0.00, 'rgba(17,34,54,0)');
-  g.addColorStop(0.55, 'rgba(17,34,54,0.20)');
-  g.addColorStop(1.00, 'rgba(17,34,54,0.55)');
+  g.addColorStop(0.00, 'rgba(' + AZUL_RGB + ',0)');
+  g.addColorStop(0.55, 'rgba(' + AZUL_RGB + ',' + (TINT_PE * 0.42) + ')');
+  g.addColorStop(1.00, 'rgba(' + AZUL_RGB + ',' + TINT_PE + ')');
   ctx.fillStyle = g;
   ctx.fillRect(0, ini, CW, fim - ini);
+}
+
+/* Mede qual tamanho de fonte faz o texto ocupar a largura alvo. */
+function tamanhoPara(txt, alvoW, maker, maxSize) {
+  ctx.font = maker(100);
+  const w = ctx.measureText(txt).width || 1;
+  return Math.min(maxSize, 100 * alvoW / w);
 }
 
 /* Bloco de nome e número: usa o PNG oficial se existir; se não,
@@ -476,42 +509,58 @@ function drawBloco() {
   const top = CH * cfg.bandTop;
   const A = CH - top;                        // altura útil da faixa
   const cy = top + A * cfg.blocoY;
+  const maxW = CW * (cfg.blocoW || 0.95);
 
   if (BLOCO.ok) {
-    const bh = A * cfg.blocoH;
-    const bw = bh * prop(BLOCO);
-    const max = CW * 0.86;
-    const k = bw > max ? max / bw : 1;
-    ctx.drawImage(BLOCO.img, (CW - bw * k) / 2, cy - (bh * k) / 2, bw * k, bh * k);
+    const iw = BLOCO.img.naturalWidth;
+    const ih = BLOCO.img.naturalHeight;
+    const sy = ih * BLOCO_CORTE.topo;                              // início do recorte
+    const sh = ih * (1 - BLOCO_CORTE.topo - BLOCO_CORTE.base);     // altura do recorte
+    let bh = A * cfg.blocoH;
+    let bw = bh * (iw / sh);
+    if (bw > maxW) { const k = maxW / bw; bw *= k; bh *= k; }
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(BLOCO.img, 0, sy, iw, sh, (CW - bw) / 2, cy - bh / 2, bw, bh);
+    ctx.restore();
     return;
   }
 
   const H = A * cfg.blocoH;
   const y0 = cy - H / 2;
+  const cond = (s, it) => (it ? 'italic ' : '') + '900 ' + s + "px 'Barlow Condensed', sans-serif";
+
   ctx.save();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
+  // cargo
+  ctx.letterSpacing = (maxW * 0.010) + 'px';
   ctx.fillStyle = DOURADO;
-  ctx.font = '700 ' + (H * 0.085) + "px 'Barlow Condensed', sans-serif";
-  ctx.letterSpacing = (H * 0.02) + 'px';
-  ctx.fillText('DEPUTADO DISTRITAL', CW / 2, y0 + H * 0.07);
+  ctx.font = '700 ' + tamanhoPara('DEPUTADO DISTRITAL', maxW * 0.52, s => '700 ' + s + "px 'Barlow Condensed', sans-serif", H * 0.115)
+             + "px 'Barlow Condensed', sans-serif";
+  ctx.fillText('DEPUTADO DISTRITAL', CW / 2, y0 + H * 0.10);
   ctx.letterSpacing = '0px';
 
-  ctx.font = 'italic 900 ' + (H * 0.235) + "px 'Barlow Condensed', sans-serif";
+  // nome — as duas linhas usam o mesmo corpo, medido pela palavra mais larga
+  const sNome = Math.min(
+    tamanhoPara('MICHELLO', maxW * 0.99, s => cond(s, true), H * 0.32),
+    tamanhoPara('CORONEL',  maxW * 1.00, s => cond(s, true), H * 0.32)
+  );
+  ctx.font = cond(sNome, true);
   ctx.fillStyle = '#ffffff';
-  ctx.fillText('CORONEL', CW / 2, y0 + H * 0.25);
+  ctx.fillText('CORONEL', CW / 2, y0 + H * 0.315);
   ctx.fillStyle = DOURADO;
-  ctx.fillText('MICHELLO', CW / 2, y0 + H * 0.45);
+  ctx.fillText('MICHELLO', CW / 2, y0 + H * 0.560);
 
+  // filete
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(CW * 0.28, y0 + H * 0.575, CW * 0.44, H * 0.016);
+  ctx.fillRect(CW / 2 - maxW * 0.33, y0 + H * 0.700, maxW * 0.66, Math.max(2, H * 0.018));
 
-  ctx.font = 'italic 900 ' + (H * 0.30) + "px 'Barlow Condensed', sans-serif";
-  ctx.fillText('20122', CW / 2, y0 + H * 0.755);
-
-  ctx.font = '700 ' + (H * 0.11) + "px 'Barlow', sans-serif";
-  ctx.fillText('podemos', CW / 2, y0 + H * 0.945);
+  // número
+  ctx.font = cond(tamanhoPara('20122', maxW * 0.92, s => cond(s, true), H * 0.36), true);
+  ctx.fillText('20122', CW / 2, y0 + H * 0.880);
   ctx.restore();
 }
 
@@ -574,7 +623,7 @@ function draw() {
     drawConvite();
   }
 
-  drawCoronel();   // entra atrás da cúpula, que cobre os ombros
+  drawCoronel();   // entra atrás da faixa, que cobre os ombros
   drawScrim();
   drawFaixa();
   drawBloco();
@@ -689,16 +738,29 @@ window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer
 window.addEventListener('orientationchange', () => setTimeout(layoutPreview, 250));
 
 /* ================= Download ==================================== */
+/* ESCALA_EXPORT multiplica a resolução do arquivo baixado.
+   2 = perfil sai em 2000×2000, post 2160×2160, stories 2160×3840.
+   Se algum celular antigo reclamar de memória, volte para 1. */
+const ESCALA_EXPORT = 2;
+
 function renderFinal() {
-  draw();
   const fmt = FORMATS[currentFormat];
+  const K = ESCALA_EXPORT;
   const t = document.createElement('canvas');
-  t.width = fmt.cw; t.height = fmt.ch;
+  t.width = fmt.cw * K; t.height = fmt.ch * K;
   const c = t.getContext('2d');
+  c.imageSmoothingEnabled = true;
+  c.imageSmoothingQuality = 'high';
+  c.save();
+  c.scale(K, K);
   if (fmt.circular) {
     c.beginPath(); c.arc(fmt.cw / 2, fmt.ch / 2, fmt.cw / 2, 0, Math.PI * 2); c.closePath(); c.clip();
   }
-  c.drawImage(cv, 0, 0);
+  const orig = ctx;
+  ctx = c;
+  try { draw(); } finally { ctx = orig; }
+  c.restore();
+  draw();                    // redesenha o preview na tela
   return t.toDataURL('image/png');
 }
 
